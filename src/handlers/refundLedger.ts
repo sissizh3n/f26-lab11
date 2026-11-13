@@ -25,13 +25,20 @@ export class RefundLedger implements Subscriber<RefundRequested> {
 
   private readonly entries: LedgerEntry[] = [];
   private readonly gateway: PaymentGateway;
+  /** Ids of refund messages already booked and paid, so a redelivery does nothing. */
+  private readonly handledMessageIds = new Set<string>();
 
   constructor(gateway: PaymentGateway) {
     this.gateway = gateway;
   }
 
   handle(message: Message<RefundRequested>): void {
+    if (this.handledMessageIds.has(message.id)) {
+      return;
+    }
     const event = message.payload;
+    // Pay first: if the provider throws, no ledger entry exists for money that never moved.
+    this.gateway.refund(event.bookingId, event.amountCents);
     this.entries.push({
       entryId: `led-${this.entries.length + 1}`,
       bookingId: event.bookingId,
@@ -40,7 +47,7 @@ export class RefundLedger implements Subscriber<RefundRequested> {
       reason: event.reason,
       recordedAtMinute: message.publishedAtMinute,
     });
-    this.gateway.refund(event.bookingId, event.amountCents);
+    this.handledMessageIds.add(message.id);
   }
 
   /** Every ledger entry, oldest first. */
